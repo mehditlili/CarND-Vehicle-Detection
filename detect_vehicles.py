@@ -568,4 +568,4 @@ else:
 # Run code on single images
 test_on_images()
 # Run code on video
-#test_on_videos()
+test_on_videos()
