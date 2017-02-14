@@ -554,7 +554,7 @@ display_sliding_windows()
 display_sliding_windows()
 display_sliding_windows()
 new_train = False  # Train or load model
-model_name = "neo_model.pkl"
+model_name = "model.pkl"
 # If train new model or model is not existing
 if len(glob.glob(model_name)) == 0 or new_train:
     svc, X_scaler = train_model()
