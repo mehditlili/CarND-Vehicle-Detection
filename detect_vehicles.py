@@ -5,17 +5,18 @@ import cv2
 import glob
 import time
 from sklearn.svm import LinearSVC, SVC
+from sklearn.externals import joblib
 from sklearn.preprocessing import StandardScaler
 from skimage.feature import hog
 from moviepy.editor import VideoFileClip
 import pickle
 from scipy.ndimage.measurements import label
 
-
 # NOTE: the next import is only valid for scikit-learn version <= 0.17
 # for scikit-learn >= 0.18 use:
 # from sklearn.model_selection import train_test_split
 from sklearn.cross_validation import train_test_split
+
 
 # Define a function to return HOG features and visualization
 def get_hog_features(img, orient, pix_per_cell, cell_per_block,
@@ -255,11 +256,10 @@ def search_windows(img, windows, clf, scaler, color_space='RGB',
                                        hist_feat=hist_feat, hog_feat=hog_feat)
         # 5) Scale extracted features to be fed to classifier
         test_features = scaler.transform(np.array(features).reshape(1, -1))
-        test_features = np.array(features).reshape(1, -1)
         # 6) Predict using your classifier
-        #prediction = clf.predict_proba(test_features)
+        # prediction = clf.predict_proba(test_features)
         prediction = clf.predict(test_features)
-        #print(prediction)
+        # print(prediction)
         # 7) If positive (prediction == 1) then save the window
         # if prediction[0, 1] > 0.6:
         #     print(prediction[0, 1])
@@ -271,22 +271,26 @@ def search_windows(img, windows, clf, scaler, color_space='RGB',
     return on_windows
 
 
-color_space = "YUV" # Can be RGB, HSV, LUV, HLS, YUV, YCrCb
-orient = 8 #9  # HOG orientations
-pix_per_cell = 8 # HOG pixels per cell
-cell_per_block = 2 # HOG cells per block
-hog_channel = 0 #"ALL"  #"ALL"  #"ALL" # Can be 0, 1, 2, or "ALL"
-spatial_size = (16, 16) # Spatial binning dimensions
-hist_bins = 16    # Number of histogram bins
-spatial_feat = True# Spatial features on or off
-hist_feat = True # Histogram features on or off
-hog_feat = True # HOG features on or off
+color_space = "YCrCb"  # Can be RGB, HSV, LUV, HLS, YUV, YCrCb
+orient = 9  # HOG orientations
+pix_per_cell = 8  # HOG pixels per cell
+cell_per_block = 2  # HOG cells per block
+hog_channel = "ALL"  # "ALL"  #"ALL" # Can be 0, 1, 2, or "ALL"
+spatial_size = (32, 32)  # Spatial binning dimensions
+hist_bins = 32  # Number of histogram bins
+spatial_feat = True  # Spatial features on or off
+hist_feat = True  # Histogram features on or off
+hog_feat = True  # HOG features on or off
 test_images = glob.glob("test_images/*.jpg")
 image = mpimg.imread(test_images[0])
 scale_factor = 1
-y_start_stop = [image.shape[0]/(scale_factor*2) - 20, image.shape[0]/scale_factor - 20]  # Min and max in y to search in slide_window()
+y_start_stop = [image.shape[0] / (scale_factor * 2) - 20,
+                image.shape[0] / scale_factor - 20]  # Min and max in y to search in slide_window()
 
+n_samples = 0
 heatmap = None
+
+
 def train_model():
     # Read in cars and notcars
     cars = glob.glob('vehicles/**/*.png', recursive=True)
@@ -294,55 +298,57 @@ def train_model():
 
     # Reduce the sample size because
     # The quiz evaluator times out after 13s of CPU time
-    step = 5
-    cars = cars[0:len(cars):step]
-    notcars = notcars[0:len(notcars):step]
+    if n_samples > 0:
+        rand_idx = np.random.randint(0, len(cars), n_samples)
+        cars = np.array(cars)[rand_idx]
+        notcars = np.array(notcars)[rand_idx]
+
     print("Cars training set size: %s" % len(cars))
     print("Notars training set size: %s" % len(notcars))
     car_features = extract_features(cars, color_space=color_space,
-                            spatial_size=spatial_size, hist_bins=hist_bins,
-                            orient=orient, pix_per_cell=pix_per_cell,
-                            cell_per_block=cell_per_block,
-                            hog_channel=hog_channel, spatial_feat=spatial_feat,
-                            hist_feat=hist_feat, hog_feat=hog_feat)
+                                    spatial_size=spatial_size, hist_bins=hist_bins,
+                                    orient=orient, pix_per_cell=pix_per_cell,
+                                    cell_per_block=cell_per_block,
+                                    hog_channel=hog_channel, spatial_feat=spatial_feat,
+                                    hist_feat=hist_feat, hog_feat=hog_feat)
     notcar_features = extract_features(notcars, color_space=color_space,
-                            spatial_size=spatial_size, hist_bins=hist_bins,
-                            orient=orient, pix_per_cell=pix_per_cell,
-                            cell_per_block=cell_per_block,
-                            hog_channel=hog_channel, spatial_feat=spatial_feat,
-                            hist_feat=hist_feat, hog_feat=hog_feat)
+                                       spatial_size=spatial_size, hist_bins=hist_bins,
+                                       orient=orient, pix_per_cell=pix_per_cell,
+                                       cell_per_block=cell_per_block,
+                                       hog_channel=hog_channel, spatial_feat=spatial_feat,
+                                       hist_feat=hist_feat, hog_feat=hog_feat)
 
     X = np.vstack((car_features, notcar_features)).astype(np.float64)
     # Fit a per-column scaler
     X_scaler = StandardScaler().fit(X)
     # Apply the scaler to X
     scaled_X = X_scaler.transform(X)
-    scaled_X = X
     # Define the labels vector
     y = np.hstack((np.ones(len(car_features)), np.zeros(len(notcar_features))))
-
 
     # Split up data into randomized training and test sets
     rand_state = np.random.randint(0, 100)
     X_train, X_test, y_train, y_test = train_test_split(
         scaled_X, y, test_size=0.2, random_state=rand_state)
 
-    print('Using:',orient,'orientations',pix_per_cell,
-        'pixels per cell and', cell_per_block,'cells per block')
+    print('Using:', orient, 'orientations', pix_per_cell,
+          'pixels per cell and', cell_per_block, 'cells per block')
     print('Feature vector length:', len(X_train[0]))
     # Use a linear SVC
     svc = LinearSVC()
-    #svc = SVC(probability=True)
+    # svc = SVC(probability=True)
     # Check the training time for the SVC
-    t=time.time()
+    t = time.time()
     svc.fit(X_train, y_train)
     t2 = time.time()
-    print(round(t2-t, 2), 'Seconds to train SVC...')
+    print(round(t2 - t, 2), 'Seconds to train SVC...')
     # Check the score of the SVC
     print('Test Accuracy of SVC = ', round(svc.score(X_test, y_test), 4))
     return svc, X_scaler
 
+
 last_windows = []
+
 
 def add_heat(heatmap, bbox_list):
     # Iterate through list of bboxes
@@ -369,8 +375,9 @@ def find_cars(image):
     if heatmap is None:
         heatmap = np.zeros_like(image[:, :, 0], dtype=np.int16)
 
-    image = cv2.resize(image, (0, 0), fx=1.0/scale_factor, fy=1.0/scale_factor)
     draw_image = np.copy(image)
+    image = image.astype(np.float32) / 255.0
+    #image = cv2.resize(image, (0, 0), fx=1.0 / scale_factor, fy=1.0 / scale_factor)
 
     # Uncomment the following line if you extracted training
     # data from .png images (scaled 0 to 1 by mpimg) and the
@@ -380,7 +387,7 @@ def find_cars(image):
     windows_1 = slide_window(image, x_start_stop=[200, None], y_start_stop=[400, 550],
                              xy_window=(100, 100), xy_overlap=(0.5, 0.5))
     windows_2 = slide_window(image, x_start_stop=[200, None], y_start_stop=[400, 550],
-                             xy_window=(150, 150), xy_overlap=(0.5, 0.5))
+                             xy_window=(75, 75), xy_overlap=(0.5, 0.5))
     # windows_3 = slide_window(image, x_start_stop=[None, None], y_start_stop=[450, 600],
     #                          xy_window=(128, 128), xy_overlap=(0.75, 0.75))
 
@@ -398,20 +405,20 @@ def find_cars(image):
                                    hog_channel=hog_channel, spatial_feat=spatial_feat,
                                    hist_feat=hist_feat, hog_feat=hog_feat)
 
-    heatmap -= 1
+    heatmap = np.zeros_like(image[:, :, 0], dtype=np.int16)
     heatmap = add_heat(heatmap, hot_windows_1)
     heatmap = add_heat(heatmap, hot_windows_2)
-    heatmap[heatmap < 0] = 0
+    #heatmap[heatmap < 0] = 0
     heatmap_disp = apply_threshold(heatmap, 2)
-    im2, contours, hierarchy = cv2.findContours(255 - 255*heatmap_disp, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+    im2, contours, hierarchy = cv2.findContours(255 - 255 * heatmap_disp, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
     print(hierarchy)
     areas = []
     contours = contours[1:]
     for contour in contours:
         areas.append(cv2.contourArea(contour))
-    cv2.imshow("heatmap", heatmap_disp*255)
+    cv2.imshow("heatmap", heatmap_disp * 255)
 
-    #inter_1 = list(set(last_windows).intersection(hot_windows_1))
+    # inter_1 = list(set(last_windows).intersection(hot_windows_1))
     # inter_2 = list(set(last_windows).intersection(hot_windows_2))
     # last_windows = hot_windows_1 + hot_windows_2
     # if len(inter_1):
@@ -420,7 +427,7 @@ def find_cars(image):
     #     hot_windows_2 = inter_2
     draw_image = draw_boxes(draw_image, hot_windows_1, color=(0, 255, 0), thick=6)
     draw_image = draw_boxes(draw_image, hot_windows_2, color=(0, 0, 255), thick=6)
-    #for contour in contours:
+    # for contour in contours:
     #    cv2.drawContours(draw_image, [contour], 0, (255, 255, 255), 3)
 
     for i in range(min(2, len(contours))):
@@ -432,25 +439,30 @@ def find_cars(image):
     cv2.waitKey(10)
     return draw_image
 
+
 def test_on_images():
     for img in test_images:
         image = mpimg.imread(img)
         result = find_cars(image)
-        plt.imshow(result)
-        plt.show()
+
 
 def test_on_videos():
-    video = "test_video.mp4"
+    video = "project_video.mp4"
     clip1 = VideoFileClip(video)
     white_clip = clip1.fl_image(find_cars)
-    white_clip.write_videofile("result_2.mp4", audio=False)
+    white_clip.write_videofile("result_project.mp4", audio=False)
 
-new_train = True
 
-if len(glob.glob("model.p")) == 0 or new_train:
+new_train = False
+
+if len(glob.glob("model.pkl")) == 0 or new_train:
     svc, X_scaler = train_model()
-    pickle.dump([svc, X_scaler], open("model.p", "wb"))
+    print("Saving model")
+    joblib.dump((svc, X_scaler), "model.pkl", compress=1)
 else:
-    svc, X_scaler = pickle.load(open("model.p", "rb"))
+    print("loading existing model")
+    svc, X_scaler = joblib.load("model.pkl")
 
+print("Testing on images")
+#test_on_images()
 test_on_videos()
